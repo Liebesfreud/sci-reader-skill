@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import sys
@@ -59,16 +60,24 @@ def request_json(
 
 
 def upload_file(upload_url: str, pdf_path: Path, *, timeout: int = 300) -> None:
-    request = urllib.request.Request(upload_url, data=pdf_path.read_bytes(), method="PUT")
+    parsed = urllib.parse.urlsplit(upload_url)
+    body = pdf_path.read_bytes()
+    path = urllib.parse.urlunsplit(("", "", parsed.path, parsed.query, ""))
+    connection_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+    connection = connection_cls(parsed.netloc, timeout=timeout)
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            if response.status not in (200, 201):
-                raise MinerUError(f"Upload failed with HTTP {response.status}")
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise MinerUError(f"Upload HTTP {exc.code}: {detail}") from exc
-    except urllib.error.URLError as exc:
-        raise MinerUError(f"Upload failed: {exc.reason}") from exc
+        connection.putrequest("PUT", path)
+        connection.putheader("Host", parsed.netloc)
+        connection.putheader("Content-Length", str(len(body)))
+        connection.endheaders(body)
+        response = connection.getresponse()
+        detail = response.read().decode("utf-8", errors="replace")
+        if response.status not in (200, 201):
+            raise MinerUError(f"Upload HTTP {response.status}: {detail}")
+    except OSError as exc:
+        raise MinerUError(f"Upload failed: {exc}") from exc
+    finally:
+        connection.close()
 
 
 def download(url: str, destination: Path, *, timeout: int = 300) -> None:
@@ -223,3 +232,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+
