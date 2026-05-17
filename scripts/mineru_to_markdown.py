@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
-"""Convert a PDF to Markdown with the MinerU API.
-
-This script intentionally keeps the API boundary in one place so the skill can be
-updated if MinerU changes its upload/task/download contract.
-"""
+"""Convert a local PDF to Markdown with the MinerU API v4."""
 
 from __future__ import annotations
 
@@ -15,11 +11,13 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from pathlib import Path
 from typing import Any
 
 
 DEFAULT_BASE_URL = "https://mineru.net/api/v4"
+DEFAULT_MODEL_VERSION = "vlm"
 
 
 class MinerUError(RuntimeError):
@@ -55,15 +53,16 @@ def request_json(
         raise MinerUError(f"MinerU returned non-JSON response: {body[:500]}") from exc
     if not isinstance(parsed, dict):
         raise MinerUError("MinerU returned an unexpected JSON shape")
+    if parsed.get("code") not in (0, None):
+        raise MinerUError(f"MinerU API error: {json.dumps(parsed, ensure_ascii=False)[:1000]}")
     return parsed
 
 
 def upload_file(upload_url: str, pdf_path: Path, *, timeout: int = 300) -> None:
     request = urllib.request.Request(upload_url, data=pdf_path.read_bytes(), method="PUT")
-    request.add_header("Content-Type", "application/pdf")
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            if response.status >= 400:
+            if response.status not in (200, 201):
                 raise MinerUError(f"Upload failed with HTTP {response.status}")
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
@@ -83,69 +82,88 @@ def download(url: str, destination: Path, *, timeout: int = 300) -> None:
         raise MinerUError(f"Download failed: {exc.reason}") from exc
 
 
-def first_present(data: dict[str, Any], *keys: str) -> Any:
-    for key in keys:
-        if key in data and data[key] not in (None, ""):
-            return data[key]
-    nested = data.get("data")
-    if isinstance(nested, dict):
-        for key in keys:
-            if key in nested and nested[key] not in (None, ""):
-                return nested[key]
-    return None
+def require_data(response: dict[str, Any]) -> dict[str, Any]:
+    data = response.get("data")
+    if not isinstance(data, dict):
+        raise MinerUError(f"MinerU response missing data object: {json.dumps(response, ensure_ascii=False)[:800]}")
+    return data
 
 
-def create_task(base_url: str, api_key: str, pdf_path: Path) -> tuple[str, str | None]:
+def create_upload_batch(base_url: str, api_key: str, pdf_path: Path, model_version: str) -> tuple[str, str]:
     payload = {
-        "file_name": pdf_path.name,
-        "parse_method": "auto",
-        "is_ocr": True,
-        "output_format": "markdown",
+        "files": [{"name": pdf_path.name, "data_id": pdf_path.stem}],
+        "model_version": model_version,
     }
-    response = request_json("POST", f"{base_url.rstrip('/')}/extract/task", api_key, payload=payload)
-    task_id = first_present(response, "task_id", "id")
-    upload_url = first_present(response, "upload_url", "file_upload_url", "url")
-    if not task_id:
-        raise MinerUError(f"Could not find task id in response: {json.dumps(response, ensure_ascii=False)[:800]}")
-    return str(task_id), None if upload_url is None else str(upload_url)
+    response = request_json("POST", f"{base_url.rstrip('/')}/file-urls/batch", api_key, payload=payload)
+    data = require_data(response)
+    batch_id = data.get("batch_id")
+    file_urls = data.get("file_urls")
+    if not batch_id or not isinstance(file_urls, list) or not file_urls:
+        raise MinerUError(f"Could not find batch_id/file_urls: {json.dumps(response, ensure_ascii=False)[:1000]}")
+    return str(batch_id), str(file_urls[0])
 
 
-def poll_task(base_url: str, api_key: str, task_id: str, poll_interval: int, timeout_seconds: int) -> dict[str, Any]:
+def poll_batch_result(
+    base_url: str,
+    api_key: str,
+    batch_id: str,
+    pdf_name: str,
+    poll_interval: int,
+    timeout_seconds: int,
+) -> dict[str, Any]:
     deadline = time.monotonic() + timeout_seconds
-    status_url = f"{base_url.rstrip('/')}/extract/task/{urllib.parse.quote(task_id)}"
+    result_url = f"{base_url.rstrip('/')}/extract-results/batch/{urllib.parse.quote(batch_id)}"
 
     while time.monotonic() < deadline:
-        response = request_json("GET", status_url, api_key)
-        status = str(first_present(response, "status", "state") or "").lower()
-        if status in {"done", "finished", "success", "completed"}:
+        response = request_json("GET", result_url, api_key)
+        data = require_data(response)
+        results = data.get("extract_result")
+        if not isinstance(results, list) or not results:
+            raise MinerUError(f"MinerU batch result missing extract_result: {json.dumps(response, ensure_ascii=False)[:1000]}")
+
+        result = next((item for item in results if isinstance(item, dict) and item.get("file_name") == pdf_name), results[0])
+        state = str(result.get("state") or "").lower()
+        if state == "done":
             return response
-        if status in {"failed", "error", "canceled", "cancelled"}:
-            raise MinerUError(f"MinerU task failed: {json.dumps(response, ensure_ascii=False)[:1000]}")
-        print(f"Waiting for MinerU task {task_id}; status={status or 'unknown'}", file=sys.stderr)
+        if state == "failed":
+            raise MinerUError(f"MinerU task failed: {json.dumps(result, ensure_ascii=False)[:1000]}")
+
+        progress = result.get("extract_progress")
+        suffix = f"; progress={progress}" if progress else ""
+        print(f"Waiting for MinerU batch {batch_id}; state={state or 'unknown'}{suffix}", file=sys.stderr)
         time.sleep(poll_interval)
 
-    raise MinerUError(f"Timed out waiting for MinerU task {task_id}")
+    raise MinerUError(f"Timed out waiting for MinerU batch {batch_id}")
 
 
-def extract_markdown_url(task_result: dict[str, Any]) -> str | None:
-    direct = first_present(task_result, "markdown_url", "md_url")
-    if direct:
-        return str(direct)
+def extract_full_zip_url(batch_result: dict[str, Any], pdf_name: str) -> str:
+    data = require_data(batch_result)
+    results = data.get("extract_result")
+    if not isinstance(results, list):
+        raise MinerUError(f"MinerU batch result missing extract_result: {json.dumps(batch_result, ensure_ascii=False)[:1000]}")
+    result = next((item for item in results if isinstance(item, dict) and item.get("file_name") == pdf_name), results[0])
+    if not isinstance(result, dict) or not result.get("full_zip_url"):
+        raise MinerUError(f"Task completed, but no full_zip_url was found: {json.dumps(batch_result, ensure_ascii=False)[:1000]}")
+    return str(result["full_zip_url"])
 
-    data = task_result.get("data")
-    candidates: list[Any] = []
-    if isinstance(data, dict):
-        candidates.extend(data.values())
-    candidates.extend(task_result.values())
 
-    for candidate in candidates:
-        if isinstance(candidate, str) and candidate.lower().endswith(".md"):
-            return candidate
-        if isinstance(candidate, dict):
-            value = first_present(candidate, "markdown_url", "md_url", "url")
-            if value and str(value).lower().endswith(".md"):
-                return str(value)
-    return None
+def safe_extract_zip(zip_path: Path, extract_dir: Path) -> None:
+    extract_dir.mkdir(parents=True, exist_ok=True)
+    base = extract_dir.resolve()
+    with zipfile.ZipFile(zip_path) as archive:
+        for member in archive.infolist():
+            target = (extract_dir / member.filename).resolve()
+            if not str(target).startswith(str(base)):
+                raise MinerUError(f"Refusing unsafe zip member: {member.filename}")
+        archive.extractall(extract_dir)
+
+
+def find_markdown(extract_dir: Path, pdf_path: Path) -> Path:
+    markdown_files = sorted(extract_dir.rglob("*.md"))
+    if not markdown_files:
+        raise MinerUError(f"No Markdown file found after extracting MinerU zip: {extract_dir}")
+    preferred = [path for path in markdown_files if path.stem.lower() == pdf_path.stem.lower()]
+    return preferred[0] if preferred else markdown_files[0]
 
 
 def convert(pdf_path: Path, out_dir: Path) -> Path:
@@ -154,34 +172,32 @@ def convert(pdf_path: Path, out_dir: Path) -> Path:
         raise MinerUError("Set MINERU_API_KEY before running this script")
 
     base_url = os.environ.get("MINERU_API_BASE_URL", DEFAULT_BASE_URL)
+    model_version = os.environ.get("MINERU_MODEL_VERSION", DEFAULT_MODEL_VERSION)
     poll_interval = int(os.environ.get("MINERU_POLL_INTERVAL", "5"))
     timeout_seconds = int(os.environ.get("MINERU_TIMEOUT", "900"))
 
     out_dir.mkdir(parents=True, exist_ok=True)
-    task_id, upload_url = create_task(base_url, api_key, pdf_path)
-    print(f"Created MinerU task: {task_id}", file=sys.stderr)
+    batch_id, upload_url = create_upload_batch(base_url, api_key, pdf_path, model_version)
+    print(f"Created MinerU upload batch: {batch_id}", file=sys.stderr)
 
-    if upload_url:
-        upload_file(upload_url, pdf_path)
-        print("Uploaded PDF", file=sys.stderr)
-    else:
-        print("No upload URL returned; assuming MinerU accepted the file by task creation", file=sys.stderr)
+    upload_file(upload_url, pdf_path)
+    print("Uploaded PDF", file=sys.stderr)
 
-    result = poll_task(base_url, api_key, task_id, poll_interval, timeout_seconds)
-    result_path = out_dir / "mineru_task_result.json"
+    result = poll_batch_result(base_url, api_key, batch_id, pdf_path.name, poll_interval, timeout_seconds)
+    result_path = out_dir / "mineru_batch_result.json"
     result_path.write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    markdown_url = extract_markdown_url(result)
-    if not markdown_url:
-        raise MinerUError(f"Task completed, but no Markdown URL was found. Saved response to {result_path}")
+    zip_url = extract_full_zip_url(result, pdf_path.name)
+    zip_path = out_dir / f"{pdf_path.stem}.mineru.zip"
+    download(zip_url, zip_path)
 
-    markdown_path = out_dir / f"{pdf_path.stem}.md"
-    download(markdown_url, markdown_path)
-    return markdown_path
+    extract_dir = out_dir / "mineru_extract"
+    safe_extract_zip(zip_path, extract_dir)
+    return find_markdown(extract_dir, pdf_path)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Convert a PDF paper to Markdown with MinerU")
+    parser = argparse.ArgumentParser(description="Convert a local PDF paper to Markdown with MinerU API v4")
     parser.add_argument("pdf", type=Path, help="Path to the PDF paper")
     parser.add_argument("--out", type=Path, default=None, help="Output directory")
     args = parser.parse_args()
@@ -197,7 +213,7 @@ def main() -> int:
     out_dir = (args.out or Path("outputs") / pdf_path.stem).resolve()
     try:
         markdown_path = convert(pdf_path, out_dir)
-    except MinerUError as exc:
+    except (MinerUError, zipfile.BadZipFile) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 

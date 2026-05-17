@@ -19,11 +19,13 @@ Use this skill to turn a PDF paper into Markdown with MinerU, read the converted
 
 ## MinerU Conversion
 
-Use the bundled script when a PDF needs conversion:
+Use the bundled script when a local PDF needs conversion:
 
 ```bash
 python scripts/mineru_to_markdown.py paper.pdf --out outputs/paper_name
 ```
+
+The script follows MinerU v4's local-file flow: request signed upload URLs from `/api/v4/file-urls/batch`, upload the PDF with `PUT`, poll `/api/v4/extract-results/batch/{batch_id}`, download `full_zip_url`, then extract the Markdown file.
 
 Required environment variable:
 
@@ -34,6 +36,7 @@ Optional environment variables:
 - `MINERU_API_BASE_URL`: Defaults to `https://mineru.net/api/v4`.
 - `MINERU_POLL_INTERVAL`: Polling interval in seconds; defaults to `5`.
 - `MINERU_TIMEOUT`: Maximum polling time in seconds; defaults to `900`.
+- `MINERU_MODEL_VERSION`: Defaults to `vlm`; use another MinerU-supported model when needed.
 
 If the API workflow changes, prefer updating `scripts/mineru_to_markdown.py` rather than embedding ad-hoc API calls in the answer.
 
@@ -85,4 +88,5 @@ Adapt headings when the user requests a different style, such as a reviewer repo
 - Save the final report as Markdown when the user asks for a file or when a PDF was converted.
 - Use clear section headings and compact bullets.
 - Include the converted Markdown path and report path in the final response.
+
 
