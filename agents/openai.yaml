@@ -1,0 +1,3 @@
+name: Sci Reader
+short_description: Read academic PDFs via MinerU and create Markdown reports.
+description: Converts PDF literature to Markdown with MinerU, then guides structured paper reading and report writing.
