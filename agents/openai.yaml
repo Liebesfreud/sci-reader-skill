@@ -1,3 +1,3 @@
 name: Sci Reader
-short_description: Read academic PDFs via MinerU and create Markdown reports.
-description: Converts PDF literature to Markdown with MinerU, then guides structured paper reading and report writing.
+short_description: Read PDFs and translate ScienceDirect issue abstracts.
+description: Converts academic PDFs to Markdown with MinerU for detailed reading reports, and translates Elsevier/ScienceDirect exported journal issue titles and abstracts into Chinese in issue order.
