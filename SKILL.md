@@ -1,6 +1,6 @@
 ---
 name: sci-reader
-description: Read academic PDF papers by converting them to Markdown with the MinerU API, then produce a structured, detailed Markdown literature-reading report. Also translate ScienceDirect/Elsevier exported issue citation files containing article titles and abstracts into Chinese in page or issue order. Use when the user asks to read, summarize, analyze, review, report on scholarly papers from PDF files, or translate a journal issue's exported titles and abstracts.
+description: Read academic PDF papers by converting them to Markdown with the MinerU API, then produce an Obsidian-ready Markdown literature reading note using the bundled template. Also translate ScienceDirect/Elsevier exported issue citation files containing article titles and abstracts into Chinese in page or issue order, and optionally produce an Obsidian-ready journal issue summary. Use when the user asks to read, summarize, analyze, review, report on scholarly papers from PDF files, or translate/summarize a journal issue's exported titles and abstracts.
 metadata:
   short-description: Read papers via MinerU Markdown conversion
 ---
@@ -9,16 +9,16 @@ metadata:
 
 Use this skill for two literature workflows:
 
-1. Turn a PDF paper into Markdown with MinerU, read the converted content, and write a detailed Markdown literature-reading report.
-2. Translate ScienceDirect/Elsevier exported issue citation files containing article titles and abstracts into Chinese, preserving the original page or issue order.
+1. Turn a PDF paper into Markdown with MinerU, read the converted content, and write an Obsidian-ready literature reading note using `文献阅读笔记-模板.md`.
+2. Translate ScienceDirect/Elsevier exported issue citation files containing article titles and abstracts into Chinese, preserving the original page or issue order, and optionally write an Obsidian-ready journal issue summary using `期刊总结-模板.md`.
 
 ## Core Workflow
 
-1. **Confirm input**: Identify the PDF path and the desired report language. Default to the user's language.
+1. **Confirm input**: Identify the PDF path and the desired note language. Default to the user's language.
 2. **Convert PDF**: Run `scripts/mineru_to_markdown.py` with the PDF path and an output directory.
 3. **Read Markdown**: Open the generated `.md`; if it is long, inspect headings first, then read the abstract, introduction, methods, results, discussion, limitations, and conclusion.
-4. **Write report**: Create a Markdown report next to the converted paper unless the user specifies another path.
-5. **Mention gaps**: If conversion omits figures, tables, formulas, references, or supplemental details, state that limitation in the report.
+4. **Write note**: Create an Obsidian-ready Markdown reading note next to the converted paper unless the user specifies another path. Use the structure in `文献阅读笔记-模板.md` by default.
+5. **Mention gaps**: If conversion omits figures, tables, formulas, references, or supplemental details, state that limitation in the note.
 
 ## MinerU Conversion
 
@@ -50,7 +50,7 @@ Use this workflow when the user provides a ScienceDirect/Elsevier citation expor
 1. **Parse records first**: Run `scripts/parse_sciencedirect_export.py` on the export file to inspect the number and order of articles.
 2. **Preserve order**: Keep the original export order as the default article order. ScienceDirect issue exports are normally already ordered by issue table of contents, page range, or article locator. Do not sort alphabetically, by DOI, by title, or by topic.
 3. **Use page data carefully**: If the export includes explicit page ranges, use the first page only to verify or restore page order. If it uses article numbers instead of pages, treat those numbers as locators and keep the original order unless the user explicitly asks for numeric sorting.
-4. **Translate each article**: For every record with a title and abstract, output exactly this structure:
+4. **Translate each article**: For every record with a title and abstract, output exactly this structure in the translated article list:
 
 ```markdown
 中文标题：<faithful Chinese title>
@@ -60,63 +60,140 @@ Use this workflow when the user provides a ScienceDirect/Elsevier citation expor
 
 5. **Translation style**: Translate into fluent academic Chinese. Preserve technical terms, model names, dataset names, abbreviations, formulas, percentages, metrics, proper nouns, and named methods. Prefer natural Chinese syntax over literal word order.
 6. **Completeness checks**: Do not omit articles. If an abstract is missing, write `摘要：未在导出文件中提供摘要。` If a title is missing, mark the title field as missing instead of inventing it.
-7. **Output file**: When translating a full issue or many articles, save a Markdown file next to the input or in the user-specified output path. Include the source file path and output path in the final response.
+7. **Output files**: When translating a full issue or many articles, save a Markdown file next to the input or in the user-specified output path. If the user asks for an issue summary, or asks for a final Obsidian-ready issue document, use `期刊总结-模板.md`: fill the trend/summary sections from the translated titles and abstracts, then paste the complete translated article list under the final placeholder section.
+8. **Final response**: Include the source file path and every output path in the final response.
 
 For long issues, work in batches but keep a running article count and append results in the parsed order. Before finalizing, compare the number of translated entries with the number of parsed records.
 
-## Report Format
+## Literature Reading Note Template
 
-Produce a detailed, evidence-grounded Markdown report with this structure by default. Prefer explanatory paragraphs over bullet lists. Use bullets only when they improve scanability, such as listing bibliographic metadata, datasets, metrics, limitations, or follow-up questions.
+Use `文献阅读笔记-模板.md` as the default final document structure for single-paper reading notes. The finished Markdown is intended for Obsidian, so preserve YAML frontmatter, Obsidian callouts, and wiki-link syntax where appropriate.
+
+Default structure:
 
 ```markdown
-# 文献阅读报告：<论文标题>
+---
+英文标题:
+中文标题:
+tags:
+发表年份:
+阅读日期:
+---
+> [!info] 中文摘要
+> 这是一句摘要。
 
-## 1. 基本信息
-| 字段 | 内容 |
-| --- | --- |
-| 题目 |  |
-| 作者 |  |
-| 年份 / 期刊或会议 |  |
-| DOI / 链接 |  |
-| 研究领域 |  |
+## 1. 总结
+这篇文章研究了什么问题？用了什么方法？得出了什么结论？
 
-## 2. 摘要
-用 2-4 个自然段说明论文的研究对象、核心问题、方法路线、主要结论和适用边界。不要只改写摘要原文，要把论文试图解决什么问题讲清楚。
+## 2. 研究问题
+- **研究背景：** 
+- **核心问题：** 
 
-## 3. 研究问题与动机
-用段落解释研究背景、已有工作的不足、作者为什么认为这个问题重要，以及论文的研究问题如何被定义。必要时补充关键术语。
+## 3. 方法与思路
+- **主要方法：** 
+- **关键概念 / 模型：** [[ ]]
+- **基本逻辑：** 
+  
+## 4. 主要结论
 
-## 4. 方法概述
-用段落描述方法或实验设计的完整链条，包括数据来源、模型/算法/理论框架、变量或指标、实验设置、对照方案和评价方式。复杂方法可以加入少量列表，但列表项必须有解释。
 
-## 5. 关键发现
-用段落展开每个主要发现：先说明发现是什么，再说明证据来自哪里，最后说明它对研究问题意味着什么。保留具体数值、指标、对比对象和实验条件。
-
-## 6. 重要图表与证据
-按图表或实验结果解释证据。说明每个重要图表回答了什么问题、展示了什么趋势或差异、以及是否存在需要谨慎解读的地方。
-
-## 7. 创新点与贡献
-用段落区分作者明确声称的贡献与你的解读。说明这些贡献相对于已有工作的增量在哪里，而不只是罗列“提出了方法、做了实验”。
-
-## 8. 局限性
-说明论文自身承认的局限，以及从方法、数据、实验外推、评价指标或论证链条中可以推断出的潜在局限。不要夸大论文没有支持的批评。
-
-## 9. 可复用思路
-说明这篇论文中哪些问题定义、数据处理、实验设计、模型结构、指标选择或写作结构可以迁移到其他研究中，并解释如何迁移。
-
-## 10. 后续阅读问题
-列出 3-6 个值得继续追问的问题，每个问题后补一句为什么它重要。
+## 5. 综合评价
+- **优点：** 
+- **局限：** 
 ```
 
-Adapt headings when the user requests a different style, such as a reviewer report, lab meeting note, replication plan, or bullet-only summary.
+Fill this template as follows:
+
+- `英文标题`: original paper title. Do not invent it; if missing, write `未在正文中明确找到`.
+- `中文标题`: faithful Chinese translation of the title.
+- `tags`: concise Obsidian tags such as `[论文, 领域名, 方法名]` or another valid style the user prefers. Avoid excessive tags.
+- `发表年份`: publication year if available; otherwise `未在正文中明确找到`.
+- `阅读日期`: today's date in `YYYY-MM-DD` format unless the user specifies another date.
+- `中文摘要` callout: write a compact Chinese abstract, usually 1-3 sentences, not a placeholder.
+- `总结`: explain the research problem, method, and conclusion in a few coherent paragraphs.
+- `研究问题`: fill both the background and core question with specific, evidence-grounded content.
+- `方法与思路`: name concrete methods, models, datasets, variables, metrics, or experimental designs when available. Use Obsidian wiki links for key concepts or models only when they are likely to be reusable notes, e.g. `[[Transformer]]`, `[[Diffusion Model]]`, or `[[因果推断]]`.
+- `主要结论`: list or explain the main findings with numbers, baselines, datasets, figures, or table references when available.
+- `综合评价`: separate strengths from limitations. Include limitations stated by the paper and cautious limitations inferred from the readable evidence.
+
+Adapt headings only when the user explicitly requests a different style, such as a reviewer report, lab meeting note, replication plan, or bullet-only summary.
+
+## Journal Issue Summary Template
+
+Use `期刊总结-模板.md` when the user provides a ScienceDirect/Elsevier issue export and asks for a journal issue summary, issue overview, trend synthesis, or Obsidian-ready final issue document. This summary is built from the translated article titles and abstracts, not from invented full-paper details.
+
+Default structure:
+
+```markdown
+> [!abstract] 本期总览
+> {{本期宏观判断：用1-2句话概括本期研究主线和演进方向}}
+
+---
+
+## 本期速览
+
+| 维度 | 观察结论 |
+|---|---|
+| **核心应用场景** | {{列出3-5个主要应用领域}} |
+| **主要方法底座** | {{列出3-5个核心方法/模型}} |
+| **研究气质** | {{用一句话描述本期论文的整体研究取向}} |
+| **本期关键词** | {{提炼5-8个高频关键词}} |
+
+> [!tip] 一句话判断
+> {{用一句话点出本期最值得关注的变化或趋势}}
+
+---
+
+## 1. 高频热词与趋势
+
+### 1.1 核心研究对象
+
+| 核心对象 | 热度 | 代表文章 | 趋势含义 |
+|---|---:|---|---|
+| **{{对象1}}** | 高/中/低 | {{列出2-3篇代表文章}} | {{一句话解释该对象为何突出}} |
+
+### 1.2 核心研究方法 / 模型
+
+| 方法簇 | 代表文章 | 方法角色 |
+|---|---|---|
+| **{{方法簇1}}** | {{列出2-3篇代表文章}} | {{一句话概括该方法的角色}} |
+
+> [!note] 为什么这些主题在本期集中出现？
+> {{解释本期主题聚类背后的学科趋势或现实驱动力}}
+
+---
+
+## 2. 新颖切入点
+
+| 文章 | 新颖之处 | 可借鉴价值 |
+|---|---|---|
+| **{{文章1}}** | {{它新在哪里}} | {{对后续研究有什么启发}} |
+
+> [!example] 本期最值得关注的研究信号
+> {{用一句话提炼本期最有前瞻价值的跨文章共同信号}}
+
+---
+
+{{在此粘贴本期各文章的标题与摘要}}
+```
+
+Fill this template as follows:
+
+- Preserve Obsidian callout syntax and Markdown tables.
+- Replace every `{{...}}` placeholder with real content; do not leave template placeholders in final output.
+- Base trend judgments only on the exported titles and abstracts. If the evidence is weak, state that the judgment is based on abstracts only.
+- Representative articles should use the translated Chinese title where possible, with the English title retained in the article list below.
+- Use `高/中/低` heat labels comparatively within the current issue, not as field-wide claims.
+- Under the final section, paste the complete translated article list in the parsed order using the required per-article structure from the ScienceDirect workflow.
+- Before finalizing, verify that the final pasted article list contains the same number of entries as the parsed records.
 
 ## Detail Expectations
 
-- For a normal paper, aim for a report that is long enough to support later discussion or reuse, usually 1,500-3,000 Chinese characters unless the user requests a shorter or longer report.
-- Each analytical section should contain at least one substantive paragraph. Avoid sections that contain only a heading and several short bullet fragments.
-- Do not create many one-line bullets. When using bullets, make each bullet self-contained and explanatory.
+- For a normal paper, fill the Obsidian reading note with enough detail to support later retrieval and reuse, usually 800-1,800 Chinese characters unless the user requests a shorter or longer note.
+- Each analytical section should contain substantive content, not just copied abstract sentences or one-line fragments.
 - Include concrete evidence from the paper whenever available: dataset names, sample sizes, model names, parameter settings, baselines, metrics, numeric results, figure/table numbers, and quoted terms.
 - If the converted Markdown lacks enough detail for a section, say what is missing and explain what can still be inferred from the readable text.
+- For issue summaries, synthesize cross-paper patterns from titles and abstracts while avoiding claims that would require full-text evidence.
 
 ## Reading Rules
 
@@ -128,6 +205,9 @@ Adapt headings when the user requests a different style, such as a reviewer repo
 
 ## Output Rules
 
-- Save the final report as Markdown when the user asks for a file or when a PDF was converted.
-- Use clear section headings. Prefer paragraphs and tables over compact bullets unless the user explicitly asks for a bullet-style report.
-- Include the converted Markdown path and report path in the final response.
+- Save the final single-paper reading note as Markdown when the user asks for a file or when a PDF was converted.
+- Save full-issue translations and issue summaries as Markdown when processing a complete issue export.
+- The final Markdown documents are intended for Obsidian: preserve YAML frontmatter, callouts such as `> [!info]`, wiki links, tables, and clean Markdown formatting.
+- Do not leave template placeholders such as `{{...}}` or sample text like `这是一句摘要。` in finished documents.
+- Use clear section headings. Prefer the bundled templates unless the user explicitly asks for a different structure.
+- Include the converted Markdown path, source export path, reading note path, translation path, and/or issue summary path in the final response as applicable.
